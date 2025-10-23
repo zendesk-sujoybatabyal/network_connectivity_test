@@ -1,0 +1,68 @@
+---
+- name: Network Connectivity Test - Ping and Telnet
+  hosts: network_test_hosts
+  gather_facts: no
+
+  vars:
+    source_file: "source_ips.txt"
+    destination_file: "destination_ips.txt"
+    ports_file: "ports.txt"
+
+  tasks:
+    - name: Read Source IPs
+      slurp:
+        src: "{{ source_file }}"
+      register: src_ips_raw
+
+    - name: Read Destination IPs
+      slurp:
+        src: "{{ destination_file }}"
+      register: dst_ips_raw
+
+    - name: Read Ports
+      slurp:
+        src: "{{ ports_file }}"
+      register: ports_raw
+
+    - name: Set Variables
+      set_fact:
+        source_ips: "{{ src_ips_raw['content'] | b64decode | splitlines() }}"
+        destination_ips: "{{ dst_ips_raw['content'] | b64decode | splitlines() }}"
+        ports: "{{ ports_raw['content'] | b64decode | splitlines() }}"
+
+    - name: Test Ping Connectivity
+      ansible.builtin.shell: "ping -c 2 {{ item }}"
+      register: ping_result
+      ignore_errors: yes
+      loop: "{{ destination_ips }}"
+      changed_when: false
+
+    - name: Display Ping Results
+      debug:
+        msg: |
+          PING Result for {{ item.item }}:
+          {{ item.stdout | default('No Output') }}
+      loop: "{{ ping_result.results }}"
+
+    - name: Test Telnet (TCP Port Connectivity)
+      vars:
+        telnet_test_cmd: "timeout 3 bash -c '</dev/tcp/{{ dest }}/{{ port }}' && echo 'Connected' || echo 'Failed'"
+      ansible.builtin.shell: "{{ telnet_test_cmd }}"
+      loop: "{{ query('product', destination_ips, ports) }}"
+      loop_control:
+        loop_var: telnet_pair
+      vars:
+        dest: "{{ telnet_pair[0] }}"
+        port: "{{ telnet_pair[1] }}"
+      register: telnet_result
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Display Telnet Results
+      debug:
+        msg: |
+          TELNET Result - Destination: {{ telnet_pair[0] }} Port: {{ telnet_pair[1] }}
+          Status: {{ 'Connected' if 'Connected' in item.stdout else 'Failed' }}
+      loop: "{{ telnet_result.results }}"
+      loop_control:
+        loop_var: item
